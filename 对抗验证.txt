@@ -1,0 +1,62 @@
+“特征筛选核心代码
+结合分类准确率和对抗验证AUC综合进行筛选， 通过middle_sort对所有特征进行排序，筛选有用的特征
+middle_sort[i] = np.where(importance_sort == i)[0] + np.where(AUC_sort == i)[0] * 2 # auc_gain”
+
+
+---------代码文件-------------------------------------------------
+def get_ad_feature(initial_x_train, y_train, initial_x_test, auc_gain = 2):
+
+    clf = lgb.LGBMClassifier(
+        boosting_type='gbdt', num_leaves=31, reg_alpha=0.0, reg_lambda=1,
+        max_depth=-1, n_estimators=100000, objective='binary',
+        subsample=0.7, colsample_bytree=0.7, subsample_freq=1,  # colsample_bylevel=0.7,
+        learning_rate=0.2, min_child_weight=25, random_state=2018, n_jobs=50
+    )
+    ############分类重要性排序###################
+    x_tra, x_tst, y_tra, y_tst = train_test_split(initial_x_train, y_train, test_size=0.2, random_state=1509)  #
+    clf.fit(x_tra, y_tra, early_stopping_rounds=125,
+            # eval_metric=['auc'],
+            eval_set=[(x_tst, y_tst)],
+            # eval_names='test',
+            verbose=100
+            )
+    importance_sort = clf.feature_importances_.argsort()[::-1]
+
+    ###############对抗验证AUC排序#########################
+    auc_validation_train_label = np.zeros((initial_x_train.shape[0], 1))
+    auc_validation_test_label = np.ones((initial_x_test.shape[0], 1))
+    validation_feature = np.concatenate((initial_x_train, initial_x_test), axis=0, out=None)
+    validation_label = np.concatenate((auc_validation_train_label, auc_validation_test_label), axis=0, out=None)
+    x_tra, x_tst, y_tra, y_tst = train_test_split(validation_feature, validation_label, test_size=0.2, random_state=1509)  #
+    clf.fit(x_tra, y_tra, early_stopping_rounds=125,
+            # eval_metric=['auc'],
+            eval_set=[(x_tst, y_tst)],
+            # eval_names='test',
+            verbose=100
+            )
+    AUC_sort = clf.feature_importances_.argsort()
+    ###################################################
+    middle_sort = np.zeros((initial_x_train.shape[1], 1))
+    for i in range(initial_x_train.shape[1]):
+        middle_sort[i] = np.where(importance_sort == i)[0] + np.where(AUC_sort == i)[0] * 2 # auc_gain
+    end_sort = middle_sort.reshape(1, -1).argsort()
+    # return_train_feature = np.zeros((initial_x_train.shape[0], 0))
+    # return_test_feature = np.zeros((initial_x_test.shape[0], 0))
+    index_1 = min(initial_x_train.shape[1] - 200, int(initial_x_train.shape[1] / 2))
+    return_train_feature = np.zeros((initial_x_train.shape[0], index_1))
+    return_test_feature = np.zeros((initial_x_test.shape[0], index_1))
+    for i in range(index_1):
+        # print(i)
+        index_ = end_sort[0, i]
+        return_train_feature[:, i] = initial_x_train[:, index_]
+        return_test_feature[:, i] = initial_x_test[:, index_]
+        # return_train_feature = np.concatenate((return_train_feature, initial_x_train[:, index_].reshape(-1, 1)), axis=1)
+        # return_test_feature = np.concatenate((return_test_feature, initial_x_test[:, index_].reshape(-1, 1)), axis=1)
+
+
+    print("最终分割模型的维度为shape={:.1f}".format(return_train_feature.shape[1]))
+
+    if(return_train_feature.shape[1] <= 200):
+        return return_train_feature, return_test_feature
+    else:
+        return get_ad_feature(return_train_feature, y_train, return_test_feature)
